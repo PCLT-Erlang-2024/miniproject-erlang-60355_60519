@@ -1,5 +1,5 @@
 -module(task1).
--export([start/0, truck_spawner/1, package_creator/0]).
+-export([start/0, truck_spawner/1, package_creator/0, conveyor_belt/1]).
 
 
 -define (TruckLimit, 30).
@@ -7,6 +7,7 @@
 
 -define (PackageCreationDelay, 250).
 
+-define (N_CONVEYORS, 3).
 
 
 spawn_truck(Id) ->
@@ -43,8 +44,10 @@ package_creator() ->
 
 
 
-conveyor_belt() ->
-    io:fwrite("Conveyor belt starting... Proccess: ~p~n", [self()]).
+conveyor_belt(Id) ->
+    io:fwrite("Conveyor belt ~w: starting... Proccess: ~p~n", [Id, self()]).
+
+
 
 
 start() ->
@@ -55,5 +58,7 @@ start() ->
 
     PackageCreatorId = spawn(?MODULE, package_creator, []),
 
-    TruckSpawnerPid = spawn(?MODULE, truck_spawner, [PackageCreatorId]).
+    TruckSpawnerPid = spawn(?MODULE, truck_spawner, [PackageCreatorId]),
+
+    ConveyorsIds = [spawn(?MODULE, conveyor_belt, [C]) || C <- lists:seq(1, ?N_CONVEYORS)].
     
