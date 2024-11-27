@@ -14,6 +14,11 @@
 -define (TRUCK_CAPACITY, 10).
 
 -define (MAX_PACKAGE_SIZE, 3).
+
+%Time in milliseconds to wait for a truck replacement range
+-define (MIN_TIME_TO_WAIT_FOR_TRUCK, 100). %This is exclusive
+-define (MAX_TIME_TO_WAIT_FOR_TRUCK, 500). %This is inclusive
+
     
 %current time in milliseconds
 now_in_milli() ->
@@ -137,7 +142,9 @@ conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, Tr
 
                         %if there is no space in the truck
                         PackageSize > TruckCapacity ->
-                                io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w, leaving leftover package ~w~n", [Id, TruckId, TruckCapacity, Packages, PackageId]), 
+                                TimeToWait = ?MIN_TIME_TO_WAIT_FOR_TRUCK + rand:uniform(?MAX_TIME_TO_WAIT_FOR_TRUCK - ?MIN_TIME_TO_WAIT_FOR_TRUCK),
+                                io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w, leaving leftover package ~w. Will wait for ~w milli before asking for other truck~n", [Id, TruckId, TruckCapacity, Packages, PackageId, TimeToWait]),
+                                timer:sleep(TimeToWait),
                                 conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId, Package) %if the truck is filled, continue the loop
 
                     end
@@ -145,7 +152,9 @@ conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, Tr
             end;
 
         TruckCapacity == 0 -> 
-            io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w~n", [Id, TruckId, TruckCapacity, Packages]), 
+            TimeToWait = ?MIN_TIME_TO_WAIT_FOR_TRUCK + rand:uniform(?MAX_TIME_TO_WAIT_FOR_TRUCK - ?MIN_TIME_TO_WAIT_FOR_TRUCK),
+            io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w. Will wait for ~w before getting other truck~n", [Id, TruckId, TruckCapacity, Packages, TimeToWait]), 
+            timer:sleep(TimeToWait),
             conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId, none) %if the truck is filled, continue the loop
     end.
 
