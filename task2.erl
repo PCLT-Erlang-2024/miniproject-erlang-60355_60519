@@ -49,8 +49,6 @@ generator_loop_check(GeneratorFunction, GeneratorName, GeneratedEntities, NextId
 %when there are no entities, we don't even receive the requests to return them
 generator_loop(GeneratorFunction, GeneratorName, [], NextId, DelayToGenerate, InitialDelay, 0, Max_Entities) ->
 
-    io:fwrite("~s: Has no entities~n", [GeneratorName]),
-
     %while waiting to create new entity, be open to messages (stop)
     receive
         stop ->  
