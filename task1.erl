@@ -1,5 +1,5 @@
 -module(task1).
--export([start/0, truck_spawner/2, package_creator/0, conveyor_belt/2]).
+-export([start/0, truck_spawner/1, package_creator/0, conveyor_belt/3]).
 
 
 -define (TruckLimit, 30).
@@ -10,47 +10,88 @@
 -define (N_CONVEYORS, 3).
 
 
-
-broadcast_msg([], _) ->
-    ok;
-broadcast_msg([Pid | PidList], Msg) ->
-    Pid ! Msg,
-    broadcast_msg(PidList, Msg).
     
-
+%current time in milliseconds
 now_in_milli() ->
     {Mega, Sec, Micro} = os:timestamp(),
     TimeInMicro = (Mega * 1000000 * 1000000) + (Sec * 1000000) + Micro,
     TimeInMicro * 1000.
 
 
-%Spawn a single truck
-spawn_truck(Id) ->
-    io:fwrite("Truck Spawner: Creating truck with id ~w~n", [Id]),
-    timer:sleep(?TruckSpawnDelay),
-    if 
-        Id < ?TruckLimit -> 
-            spawn_truck(Id + 1);
-        
-        %Id has reached the limit, no more trucks
-        true -> 
-            io:fwrite("Truck Spawner: No more trucks~n", [])
+%broadcast the same message to a list of proccesses
+broadcast_msg([], _) ->
+    ok;
+broadcast_msg([Pid | PidList], Msg) ->
+    Pid ! Msg,
+    broadcast_msg(PidList, Msg).
 
+
+%generates a truck {Id, capacity, packages}
+generate_truck(Id) ->
+    io:fwrite("Truck Spawner: Creating truck with id ~w~n", [Id]),
+    {Id, 10, []}.
+
+
+%used to verify if there are or not more trucks
+truck_spawner_loop_check(Trucks, NextTruckId, DelayToCreateTruck) ->
+    if 
+        NextTruckId =< ?TruckLimit -> 
+            truck_spawner_loop(Trucks, NextTruckId, DelayToCreateTruck);
+
+        true -> %only checked if previous condition false
+            io:fwrite("Truck Spawner: No more trucks~n", [])
+    end.
+
+%when there are no trucks, we don't even receive the requests to return them
+truck_spawner_loop([], NextTruckId, DelayToCreateTruck) ->
+
+    if
+        DelayToCreateTruck =< 0 -> %if the delay was already waited, then simply create a new truck
+            truck_spawner_loop_check([generate_truck(NextTruckId)], NextTruckId + 1, ?TruckSpawnDelay);
+
+        true -> %if there is time to wait
+
+            timer:sleep(DelayToCreateTruck),
+            truck_spawner_loop_check([generate_truck(NextTruckId)], NextTruckId + 1, ?TruckSpawnDelay)
+    end;
+
+%the truck spawner loop when trucks is not empty, so it can receive requests to get trucks
+truck_spawner_loop(Trucks, NextTruckId, DelayToCreateTruck) ->
+   
+    Now = now_in_milli(), %get current time to track change in delay
+
+    %while waiting to create new truck, be open to messages (request)
+    receive
+
+        %received request to have truck
+        {receive_truck_request, RequesterPid} ->
+
+            io:fwrite("Truck spawner: Received request to receive a truck from ~w...~n", [RequesterPid]),
+            
+            [TruckToGive | RestOfTrucks] = Trucks, %extract truck to give (we're sure that exist because Packages is not [])
+
+            RequesterPid ! TruckToGive, %send the truck to the requester
+            
+            truck_spawner_loop_check(RestOfTrucks, NextTruckId + 1, DelayToCreateTruck -  (now_in_milli() - Now)) %continue loop without the given package and waiting the remaining time
+        
+        %create package after time having waited
+        after DelayToCreateTruck -> 
+            truck_spawner_loop_check([generate_truck(NextTruckId) | Trucks], NextTruckId + 1, ?TruckSpawnDelay)
     end.
 
 
-truck_spawner(PackageCreatorId, ConveyorPids) ->
+truck_spawner(ParentPid) ->
 
     TruckSpawnerId = self(),
 
     io:fwrite("Truck spawner starting... Proccess: ~p~n", [TruckSpawnerId]),
 
-    spawn_truck(1), %start loop of spawning trucks till we have no more
+    truck_spawner_loop([], 1, ?TruckSpawnDelay), %start loop of spawning trucks till we have no more
 
-    %There are no more trucks at this point, sending stop messages
+    %There are no more trucks at this point, sending stop message to parent
+    ParentPid ! stop. 
 
-    broadcast_msg([PackageCreatorId | ConveyorPids], stop).
-    
+
 
 
 
@@ -106,28 +147,58 @@ package_creator() ->
     package_creator_loop([], 1, ?PackageCreationDelay).
 
 
-conveyor_belt_loop(Id, PackageCreatorId) ->
+conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, TruckCapacity, Packages}) ->
 
-    %Ask for package
-    PackageCreatorId ! {receive_package_request, self()},
+
+    if 
+        %if the truck is not filled
+        TruckCapacity > 0 ->
+
+            %Ask for package
+            PackageCreatorId ! {receive_package_request, self()},
+
+            receive
+                stop -> io:fwrite("Conveyor belt ~w: Received message to stop, stopping...~n", [Id]);
+            
+                %in the case we have a package
+                {Package} ->
+                    io:fwrite("Conveyor belt ~w: Received package ~w to put in truck ~w with current capacity ~w~n", [Id, Package, TruckId, TruckCapacity]),
+
+                    %we put the package in the truck and reduce its capacity
+                    conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, TruckCapacity - 1, [Package | Packages]}) %we put the package in the truck        
+                
+            end;
+
+        TruckCapacity == 0 ->
+            io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w~n", [Id, TruckId, TruckCapacity, Packages]), 
+            conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) %if the truck is filled, continue the loop
+    end.
+
+
+%The begining of the conveyor belt loop, in which it gets a truck and then fils it with packages
+conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) ->
+
+
+    %ask for truck
+    TruckSpawnerId ! {receive_truck_request, self()},
 
     receive
-        stop ->
-            io:fwrite("Conveyor belt ~w: Received message to stop, stopping...~n", [Id]);
+        stop -> io:fwrite("Conveyor belt ~w: Received message to stop, stopping...~n", [Id]);
 
-        {PackageToGive} ->
-            io:fwrite("Conveyor belt ~w: Received package ~w~n", [Id, PackageToGive]),
-            conveyor_belt_loop(Id, PackageCreatorId)
-
+        Truck ->
+            io:fwrite("Conveyor belt ~w: Received truck ~w~n", [Id, Truck]),
+            conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, Truck)
     end.
+                    
+
 
 
     
 
-conveyor_belt(Id, PackageCreatorPid) ->
+conveyor_belt(Id, PackageCreatorPid, TruckSpawnerId) ->
 
     io:fwrite("Conveyor belt ~w: starting... Proccess: ~p~n", [Id, self()]),
-    conveyor_belt_loop(Id, PackageCreatorPid).
+    conveyor_belt_loop(Id, PackageCreatorPid, TruckSpawnerId).
 
 
 
@@ -138,9 +209,16 @@ start() ->
 
     io:fwrite("Started main function... Proccess: ~p~n", [StartPid]),
 
+
+    TruckSpawnerPid = spawn(?MODULE, truck_spawner, [StartPid]),
+
     PackageCreatorId = spawn(?MODULE, package_creator, []),
 
     %starts and gets ConveyorIds
-    ConveyorsIds = [spawn(?MODULE, conveyor_belt, [C, PackageCreatorId]) || C <- lists:seq(1, ?N_CONVEYORS)],
-    
-    TruckSpawnerPid = spawn(?MODULE, truck_spawner, [PackageCreatorId, ConveyorsIds]).
+    ConveyorsIds = [spawn(?MODULE, conveyor_belt, [C, PackageCreatorId, TruckSpawnerPid]) || C <- lists:seq(1, ?N_CONVEYORS)],
+
+    %we wait for the TruckSpawner proccess to warn that there will be no more trucks
+    receive
+        stop -> broadcast_msg([PackageCreatorId | ConveyorsIds], stop) %we tell the remaining proccesses to stop too
+
+    end.    
