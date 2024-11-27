@@ -1,4 +1,4 @@
--module(task1).
+-module(task2).
 -export([start/0, truck_spawner/0, package_creator/0, conveyor_belt/3]).
 
 
@@ -13,7 +13,7 @@
 
 -define (TRUCK_CAPACITY, 10).
 
-
+-define (MAX_PACKAGE_SIZE, 3).
     
 %current time in milliseconds
 now_in_milli() ->
@@ -100,8 +100,9 @@ truck_spawner() ->
 
 
 generate_package(Id) ->
-    io:fwrite("Package creator: Creating package with id ~w~n", [Id]),
-    {Id}.
+    Size = rand:uniform(?MAX_PACKAGE_SIZE),
+    io:fwrite("Package creator: Creating package with id ~w and size ~w~n", [Id, Size]),
+    {Id, Size}.
 
 
 package_creator() -> 
@@ -123,22 +124,34 @@ conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, Tr
                 stop -> io:fwrite("Conveyor belt ~w: Received message to stop, stopping...~n", [Id]);
             
                 %in the case we have a package
-                {Package} ->
-                    io:fwrite("Conveyor belt ~w: Received package ~w to put in truck ~w with current capacity ~w~n", [Id, Package, TruckId, TruckCapacity]),
+                Package ->
+                    {PackageId, PackageSize} = Package,
+                    io:fwrite("Conveyor belt ~w: Received package ~w with size ~w to put in truck ~w with current capacity ~w~n", [Id, PackageId, PackageSize, TruckId, TruckCapacity]),
 
-                    %we put the package in the truck and reduce its capacity
-                    conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, TruckCapacity - 1, [Package | Packages]}) %we put the package in the truck        
+                    if 
+                        %if there is space in the truck
+                        PackageSize =< TruckCapacity ->
+
+                            %we put the package in the truck and reduce its capacity
+                            conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, TruckCapacity - PackageSize, [Package | Packages]}); %we put the package in the truck
+
+                        %if there is no space in the truck
+                        PackageSize > TruckCapacity ->
+                                io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w, leaving leftover package ~w~n", [Id, TruckId, TruckCapacity, Packages, PackageId]), 
+                                conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId, Package) %if the truck is filled, continue the loop
+
+                    end
                 
             end;
 
         TruckCapacity == 0 -> 
             io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w~n", [Id, TruckId, TruckCapacity, Packages]), 
-            conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) %if the truck is filled, continue the loop
+            conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId, none) %if the truck is filled, continue the loop
     end.
 
 
 %The begining of the conveyor belt loop, in which it gets a truck and then fils it with packages
-conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) ->
+conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId, PreviousPackage) ->
 
 
     %ask for truck
@@ -149,7 +162,18 @@ conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) ->
 
         Truck ->
             io:fwrite("Conveyor belt ~w: Received truck ~w~n", [Id, Truck]),
-            conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, Truck)
+            
+            case PreviousPackage of
+                none -> %if there was no leftover package
+                    conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, Truck);
+
+                Package -> %in the case there was a leftover package
+                    {TruckId, TruckCapacity, _} = Truck,
+                    {PackageId, PackageSize} = Package,
+                    io:fwrite("Conveyor belt ~w: Leftover package ~w with size ~w will be put in truck ~w~n", [Id, PackageId, PackageSize, TruckId]),
+                    conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, TruckCapacity - PackageSize, [Package]}) %we put the package in the truck
+
+            end
     end.
                     
 
@@ -158,7 +182,7 @@ conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) ->
 conveyor_belt(Id, PackageCreatorPid, TruckSpawnerId) ->
 
     io:fwrite("Conveyor belt ~w: starting... Proccess: ~p~n", [Id, self()]),
-    conveyor_belt_loop(Id, PackageCreatorPid, TruckSpawnerId).
+    conveyor_belt_loop(Id, PackageCreatorPid, TruckSpawnerId, none).
 
 
 
