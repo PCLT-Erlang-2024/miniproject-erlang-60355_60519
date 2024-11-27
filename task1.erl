@@ -13,6 +13,8 @@
 
 -define (TRUCK_CAPACITY, 10).
 
+-define (MAX_TRUCKS, 100). %The maximum number of trucks we can have at any given time
+-define (MAX_PACKAGES, 100). %The maximum number of packages we can have at any given time
 
     
 %current time in milliseconds
@@ -31,19 +33,19 @@ broadcast_msg([Pid | PidList], Msg) ->
 
 
 %used to verify if the delay is correct (and maybe other conditions in the future)
-generator_loop_check(GeneratorFunction, GeneratorName, GeneratedEntities, NextId, DelayToGenerate, InitialDelay) ->
+generator_loop_check(GeneratorFunction, GeneratorName, GeneratedEntities, NextId, DelayToGenerate, InitialDelay, N_Entities, Max_Entities) ->
             
     if 
         DelayToGenerate =< 0 -> %if in the meantime the wait time has already ended, create immediatly a new entity and continue the loop
-            generator_loop(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId) | GeneratedEntities], NextId + 1, InitialDelay, InitialDelay);
+            generator_loop(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId) | GeneratedEntities], NextId + 1, InitialDelay, InitialDelay, N_Entities + 1, Max_Entities);
 
         DelayToGenerate > 0 -> %There is still time to wait
-            generator_loop(GeneratorFunction, GeneratorName, GeneratedEntities, NextId, DelayToGenerate, InitialDelay)
+            generator_loop(GeneratorFunction, GeneratorName, GeneratedEntities, NextId, DelayToGenerate, InitialDelay, N_Entities, Max_Entities)
     end.
 
 
 %when there are no entities, we don't even receive the requests to return them
-generator_loop(GeneratorFunction, GeneratorName, [], NextId, DelayToGenerate, InitialDelay) ->
+generator_loop(GeneratorFunction, GeneratorName, [], NextId, DelayToGenerate, InitialDelay, 0, Max_Entities) ->
 
     %while waiting to create new entity, be open to messages (stop)
     receive
@@ -52,12 +54,13 @@ generator_loop(GeneratorFunction, GeneratorName, [], NextId, DelayToGenerate, In
         
         %create entity after time having waited
         after DelayToGenerate ->
-            generator_loop_check(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId)], NextId + 1, InitialDelay, InitialDelay)
+            generator_loop_check(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId)], NextId + 1, InitialDelay, InitialDelay, 1, Max_Entities)
     end;
 
-
-%in this body, the entity spawner loop when Entities is not empty, so it can receive requests to get them
-generator_loop(GeneratorFunction, GeneratorName, Entities, NextId, DelayToGenerate, InitialDelay) ->
+%in this body, the entity spawner won't create more entities because it is full, will only receive requests to send them. (N_entities == Max_Entities)
+generator_loop(GeneratorFunction, GeneratorName, Entities, NextId, DelayToGenerate, InitialDelay, Max_Entities, Max_Entities) ->
+   
+    io:fwrite("~s: Has reached the maximum number of entities (~w)~n", [GeneratorName, Max_Entities]),
    
     Now = now_in_milli(), %get current time to track change in delay
 
@@ -75,11 +78,34 @@ generator_loop(GeneratorFunction, GeneratorName, Entities, NextId, DelayToGenera
 
             RequesterPid ! EntityToGive, %send the entity to the requester
             
-            generator_loop_check(GeneratorFunction, GeneratorName, RestOfEntities, NextId, DelayToGenerate -  (now_in_milli() - Now), InitialDelay) %continue loop without the given entity and waiting the remaining time
+            generator_loop_check(GeneratorFunction, GeneratorName, RestOfEntities, NextId, DelayToGenerate -  (now_in_milli() - Now), InitialDelay, Max_Entities - 1, Max_Entities) %continue loop without the given entity and waiting the remaining time
         
-        %create entity after time having waited
+    end;
+
+%in this body, the entity spawner loop when Entities is not empty, so it can receive requests to get them. Also N_Entities < Max_Entities, and so it can create new entities after some time
+generator_loop(GeneratorFunction, GeneratorName, Entities, NextId, DelayToGenerate, InitialDelay, N_Entities, Max_Entities) ->
+   
+    Now = now_in_milli(), %get current time to track change in delay
+
+    %while waiting to create new entity, be open to messages (request and stop)
+    receive
+
+        stop -> io:fwrite("~s: Received message to stop, stopping...~n", [GeneratorName]);
+
+        %received request to receive one of the entities of this generator
+        {request_for_entity, RequesterPid} ->
+
+            io:fwrite("~s: Received request from ~w... Current number of entities: ~w~n", [GeneratorName, RequesterPid, N_Entities]),
+            
+            [EntityToGive | RestOfEntities] = Entities, %extract entity to give (we're sure that exist because Entities is not [])
+
+            RequesterPid ! EntityToGive, %send the entity to the requester
+            
+            generator_loop_check(GeneratorFunction, GeneratorName, RestOfEntities, NextId, DelayToGenerate -  (now_in_milli() - Now), InitialDelay, N_Entities - 1, Max_Entities) %continue loop without the given entity and waiting the remaining time
+        
+        %create entity after time having waited and continue the loop
         after DelayToGenerate -> 
-            generator_loop_check(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId) | Entities], NextId + 1, InitialDelay, InitialDelay)
+            generator_loop_check(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId) | Entities], NextId + 1, InitialDelay, InitialDelay, N_Entities + 1, Max_Entities)
     end.
 
 
@@ -95,7 +121,7 @@ truck_spawner() ->
 
     io:fwrite("Truck spawner: starting... Proccess: ~p~n", [TruckSpawnerId]),
 
-    generator_loop(fun generate_truck/1, "Truck spawner", [], 1, ?TruckSpawnDelay, ?TruckSpawnDelay).
+    generator_loop(fun generate_truck/1, "Truck spawner", [], 1, ?TruckSpawnDelay, ?TruckSpawnDelay, 0, ?MAX_TRUCKS).
 
 
 
@@ -106,7 +132,7 @@ generate_package(Id) ->
 
 package_creator() -> 
     io:fwrite("Package creator: starting... Proccess: ~p~n", [self()]),
-    generator_loop(fun generate_package/1, "Package creator", [], 1, ?PackageCreationDelay, ?PackageCreationDelay).
+    generator_loop(fun generate_package/1, "Package creator", [], 1, ?PackageCreationDelay, ?PackageCreationDelay, 0, ?MAX_PACKAGES).
 
 
 conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, TruckCapacity, Packages}) ->
