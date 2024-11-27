@@ -42,21 +42,21 @@ generator_loop_check(GeneratorFunction, GeneratorName, GeneratedEntities, NextId
     end.
 
 
-%when there are no trucks, we don't even receive the requests to return them
+%when there are no entities, we don't even receive the requests to return them
 generator_loop(GeneratorFunction, GeneratorName, [], NextId, DelayToGenerate, InitialDelay) ->
 
-    %while waiting to create new package, be open to messages (stop)
+    %while waiting to create new entity, be open to messages (stop)
     receive
         stop ->  
             io:fwrite("~s: Received message to stop, stopping...~n", [GeneratorName])
         
-        %create package after time having waited
+        %create entity after time having waited
         after DelayToGenerate ->
             generator_loop_check(GeneratorFunction, GeneratorName, [GeneratorFunction(NextId)], NextId + 1, InitialDelay, InitialDelay)
     end;
 
 
-%the truck spawner loop when trucks is not empty, so it can receive requests to get trucks
+%in this body, the entity spawner loop when Entities is not empty, so it can receive requests to get them
 generator_loop(GeneratorFunction, GeneratorName, Entities, NextId, DelayToGenerate, InitialDelay) ->
    
     Now = now_in_milli(), %get current time to track change in delay
