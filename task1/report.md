@@ -8,6 +8,8 @@ The application will run until the time reaches the one specific in the TIME_TO_
 
 - After this a certain number of belts will be created and handle the operations between the packages, belts and trucks.
 
+- Getting a truck or a package is handled with a request message that has a response message in response. Request messages are only listened for when they can be handled.
+
 - The main process will then sleep for the amount of time we defined that our program will run in order for the operations keep working and when it wakes up sends a signal to the threads so the operations stop and the program ends.
 
 ## **Main Functions** ##
