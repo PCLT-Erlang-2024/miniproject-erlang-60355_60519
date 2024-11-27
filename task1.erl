@@ -49,7 +49,7 @@ truck_spawner(PackageCreatorId, ConveyorPids) ->
 
     %There are no more trucks at this point, sending stop messages
 
-    broadcast_msg([PackageCreatorId, ConveyorPids], stop).
+    broadcast_msg([PackageCreatorId | ConveyorPids], stop).
     
 
 
@@ -57,10 +57,8 @@ truck_spawner(PackageCreatorId, ConveyorPids) ->
 %when there are no packages, we don't even receive the requests to return them
 package_creator_loop([], NextPackageId, DelayToCreatePackage) ->
 
-    io:fwrite("Package creator: There are currently no packages~n", []),
-
     if
-        DelayToCreatePackage =< 0 -> 
+        DelayToCreatePackage =< 0 -> %if the delay was already waited, then simply create a new package
             package_creator_loop([{NextPackageId}], NextPackageId + 1, ?PackageCreationDelay);
 
         true -> %if there is time to wait
@@ -94,9 +92,7 @@ package_creator_loop(Packages, NextPackageId, DelayToCreatePackage) ->
             %extract package to give (we're sure that exist because Packages is not [])
             [PackageToGive | RestOfPackages] = Packages,
             RequesterPid ! {PackageToGive},
-            TimeWaited = now_in_milli() - Now,
-            io:fwrite("Package creator: Time waited ~w~n", [TimeWaited]), 
-            package_creator_loop(RestOfPackages, NextPackageId + 1, DelayToCreatePackage -  TimeWaited) %continue loop without the given package and waiting the remaining time
+            package_creator_loop(RestOfPackages, NextPackageId + 1, DelayToCreatePackage -  (now_in_milli() - Now)) %continue loop without the given package and waiting the remaining time
         
         %create package after time having waited
         after DelayToCreatePackage ->
