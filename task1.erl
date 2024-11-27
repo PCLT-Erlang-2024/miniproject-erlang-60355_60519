@@ -32,11 +32,18 @@ generate_truck(Id) ->
     {Id, 10, []}.
 
 
-%used to verify if there are or not more trucks
+%used to verify if there are or not more trucks and if the delay is correct
 truck_spawner_loop_check(Trucks, NextTruckId, DelayToCreateTruck) ->
     if 
-        NextTruckId =< ?TruckLimit -> 
-            truck_spawner_loop(Trucks, NextTruckId, DelayToCreateTruck);
+        NextTruckId =< ?TruckLimit -> %check if there are still available trucks
+            
+            if 
+                DelayToCreateTruck =< 0 -> %in the meantime the wait time has already ended, create immediatly a new truck and continue the loop
+                    truck_spawner_loop([generate_truck(NextTruckId) | Trucks], NextTruckId + 1, ?TruckSpawnDelay);
+
+                DelayToCreateTruck > 0 -> %There is still time to wait
+                    truck_spawner_loop(Trucks, NextTruckId, ?TruckSpawnDelay)
+            end;
 
         true -> %only checked if previous condition false
             io:fwrite("Truck Spawner: No more trucks~n", [])
@@ -45,15 +52,9 @@ truck_spawner_loop_check(Trucks, NextTruckId, DelayToCreateTruck) ->
 %when there are no trucks, we don't even receive the requests to return them
 truck_spawner_loop([], NextTruckId, DelayToCreateTruck) ->
 
-    if
-        DelayToCreateTruck =< 0 -> %if the delay was already waited, then simply create a new truck
-            truck_spawner_loop_check([generate_truck(NextTruckId)], NextTruckId + 1, ?TruckSpawnDelay);
+        timer:sleep(DelayToCreateTruck),
+        truck_spawner_loop_check([generate_truck(NextTruckId)], NextTruckId + 1, ?TruckSpawnDelay);
 
-        true -> %if there is time to wait
-
-            timer:sleep(DelayToCreateTruck),
-            truck_spawner_loop_check([generate_truck(NextTruckId)], NextTruckId + 1, ?TruckSpawnDelay)
-    end;
 
 %the truck spawner loop when trucks is not empty, so it can receive requests to get trucks
 truck_spawner_loop(Trucks, NextTruckId, DelayToCreateTruck) ->
@@ -93,27 +94,30 @@ truck_spawner(ParentPid) ->
 
 
 
-
-
-%when there are no packages, we don't even receive the requests to return them
-package_creator_loop([], NextPackageId, DelayToCreatePackage) ->
+%does the package_creator_loop and checks if the delay is already over
+package_creator_loop_check(Packages, NextPackageId, DelayToCreatePackage) ->
 
     if
         DelayToCreatePackage =< 0 -> %if the delay was already waited, then simply create a new package
             package_creator_loop([{NextPackageId}], NextPackageId + 1, ?PackageCreationDelay);
 
-        true -> %if there is time to wait
+        DelayToCreatePackage > 0 ->
+            package_creator_loop(Packages, NextPackageId, DelayToCreatePackage)
+    
+    end.
 
-            %while waiting to create new package, be open to messages (stop)
-            receive
-                stop ->  
-                    io:fwrite("Package creator: Received message to stop, stopping...~n", [])
-                
-                %create package after time having waited
-                after DelayToCreatePackage ->
-                    io:fwrite("Package creator: Creating package with id ~w~n", [NextPackageId]), 
-                    package_creator_loop([{NextPackageId}], NextPackageId + 1, ?PackageCreationDelay)
-            end
+%when there are no packages, we don't even receive the requests to return them
+package_creator_loop([], NextPackageId, DelayToCreatePackage) ->
+
+    %while waiting to create new package, be open to messages (stop)
+    receive
+        stop ->  
+            io:fwrite("Package creator: Received message to stop, stopping...~n", [])
+        
+        %create package after time having waited
+        after DelayToCreatePackage ->
+            io:fwrite("Package creator: Creating package with id ~w~n", [NextPackageId]), 
+            package_creator_loop_check([{NextPackageId}], NextPackageId + 1, ?PackageCreationDelay)
     end;
 
 package_creator_loop(Packages, NextPackageId, DelayToCreatePackage) ->
@@ -133,12 +137,12 @@ package_creator_loop(Packages, NextPackageId, DelayToCreatePackage) ->
             %extract package to give (we're sure that exist because Packages is not [])
             [PackageToGive | RestOfPackages] = Packages,
             RequesterPid ! {PackageToGive},
-            package_creator_loop(RestOfPackages, NextPackageId + 1, DelayToCreatePackage -  (now_in_milli() - Now)) %continue loop without the given package and waiting the remaining time
+            package_creator_loop_check(RestOfPackages, NextPackageId + 1, DelayToCreatePackage -  (now_in_milli() - Now)) %continue loop without the given package and waiting the remaining time
         
         %create package after time having waited
         after DelayToCreatePackage ->
             io:fwrite("Package creator: Creating package with id ~w~n", [NextPackageId]), 
-            package_creator_loop([{NextPackageId} | Packages], NextPackageId + 1, ?PackageCreationDelay)
+            package_creator_loop_check([{NextPackageId} | Packages], NextPackageId + 1, ?PackageCreationDelay)
     end.
 
 
@@ -169,7 +173,7 @@ conveyor_belt_with_truck_loop(Id, PackageCreatorId, TruckSpawnerId, {TruckId, Tr
                 
             end;
 
-        TruckCapacity == 0 ->
+        TruckCapacity == 0 -> 
             io:fwrite("Conveyor belt ~w: Sending off truck ~w with current capacity ~w and packages ~w~n", [Id, TruckId, TruckCapacity, Packages]), 
             conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) %if the truck is filled, continue the loop
     end.
