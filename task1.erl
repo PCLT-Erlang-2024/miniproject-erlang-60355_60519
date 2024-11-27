@@ -2,12 +2,16 @@
 -export([start/0, truck_spawner/1, package_creator/0, conveyor_belt/3]).
 
 
--define (TruckLimit, 30).
 -define (TruckSpawnDelay, 300).
 
 -define (PackageCreationDelay, 250).
 
 -define (N_CONVEYORS, 3).
+
+%Time in milliseconds to run the program
+-define (TIME_TO_RUN, 20000).
+
+-define (TRUCK_CAPACITY, 10).
 
 
     
@@ -29,25 +33,20 @@ broadcast_msg([Pid | PidList], Msg) ->
 %generates a truck {Id, capacity, packages}
 generate_truck(Id) ->
     io:fwrite("Truck Spawner: Creating truck with id ~w~n", [Id]),
-    {Id, 10, []}.
+    {Id, ?TRUCK_CAPACITY, []}.
 
 
-%used to verify if there are or not more trucks and if the delay is correct
+%used to verify if the delay is correct
 truck_spawner_loop_check(Trucks, NextTruckId, DelayToCreateTruck) ->
-    if 
-        NextTruckId =< ?TruckLimit -> %check if there are still available trucks
             
-            if 
-                DelayToCreateTruck =< 0 -> %in the meantime the wait time has already ended, create immediatly a new truck and continue the loop
-                    truck_spawner_loop([generate_truck(NextTruckId) | Trucks], NextTruckId + 1, ?TruckSpawnDelay);
+    if 
+        DelayToCreateTruck =< 0 -> %in the meantime the wait time has already ended, create immediatly a new truck and continue the loop
+            truck_spawner_loop([generate_truck(NextTruckId) | Trucks], NextTruckId + 1, ?TruckSpawnDelay);
 
-                DelayToCreateTruck > 0 -> %There is still time to wait
-                    truck_spawner_loop(Trucks, NextTruckId, ?TruckSpawnDelay)
-            end;
-
-        true -> %only checked if previous condition false
-            io:fwrite("Truck Spawner: No more trucks~n", [])
+        DelayToCreateTruck > 0 -> %There is still time to wait
+            truck_spawner_loop(Trucks, NextTruckId, ?TruckSpawnDelay)
     end.
+
 
 %when there are no trucks, we don't even receive the requests to return them
 truck_spawner_loop([], NextTruckId, DelayToCreateTruck) ->
@@ -63,6 +62,8 @@ truck_spawner_loop(Trucks, NextTruckId, DelayToCreateTruck) ->
 
     %while waiting to create new truck, be open to messages (request)
     receive
+
+        stop -> io:fwrite("Truck spawner: Received message to stop, stopping...~n", []);
 
         %received request to have truck
         {receive_truck_request, RequesterPid} ->
@@ -195,8 +196,6 @@ conveyor_belt_loop(Id, PackageCreatorId, TruckSpawnerId) ->
     end.
                     
 
-
-
     
 
 conveyor_belt(Id, PackageCreatorPid, TruckSpawnerId) ->
@@ -221,8 +220,9 @@ start() ->
     %starts and gets ConveyorIds
     ConveyorsIds = [spawn(?MODULE, conveyor_belt, [C, PackageCreatorId, TruckSpawnerPid]) || C <- lists:seq(1, ?N_CONVEYORS)],
 
-    %we wait for the TruckSpawner proccess to warn that there will be no more trucks
-    receive
-        stop -> broadcast_msg([PackageCreatorId | ConveyorsIds], stop) %we tell the remaining proccesses to stop too
+    
+    timer:sleep(?TIME_TO_RUN), %we wait for a certain time before naturally ending the process
 
-    end.    
+    io:fwrite("Main Function: Time to run has passed (~w milliseconds), ending proccess...~n", [StartPid]),
+
+    broadcast_msg([TruckSpawnerPid | [ PackageCreatorId | ConveyorsIds ]], stop). %we tell the remaining proccesses to stop too
